@@ -1,0 +1,220 @@
+#include <U8g2lib.h>
+#include <Wire.h>
+
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+
+// Pins
+#define JOY_X 34
+#define TOUCH 4
+#define BUZZER 25
+
+// Game states
+#define START 0
+#define PLAY 1
+#define OVER 2
+
+int gameState = START;
+
+// Player (mochi)
+int playerX = 64;
+const int playerY = 54;
+
+// Blocks
+#define MAX_BLOCKS 2
+int blockX[MAX_BLOCKS];
+int blockY[MAX_BLOCKS];
+
+// Game variables
+int score = 0;
+int lives = 3;
+bool lastTouch = LOW;
+
+// Timing
+unsigned long lastUpdate = 0;
+int speed = 1;
+
+void setup() {
+  u8g2.begin();
+  pinMode(TOUCH, INPUT);
+  pinMode(JOY_X, INPUT);
+  pinMode(BUZZER, OUTPUT);
+
+  randomSeed(analogRead(0));
+  resetGame();
+}
+
+void loop() {
+  u8g2.clearBuffer();
+
+  handleTouch();
+
+  if (gameState == START) drawStart();
+  else if (gameState == PLAY) {
+    updateGame();
+    drawGame();
+  }
+  else if (gameState == OVER) drawGameOver();
+
+  u8g2.sendBuffer();
+}
+
+// ---------------- RESET ----------------
+void resetGame() {
+  playerX = 64;
+  score = 0;
+  lives = 3;
+  speed = 1;
+
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    blockX[i] = random(0, 120);
+    blockY[i] = random(-60, 0);
+  }
+}
+
+// ---------------- TOUCH ----------------
+void handleTouch() {
+  bool t = digitalRead(TOUCH);
+
+  if (t == HIGH && lastTouch == LOW) {
+    if (gameState == START) {
+      resetGame();
+      beep(100);
+      gameState = PLAY;
+    }
+    else if (gameState == OVER) {
+      gameState = START;
+    }
+  }
+  lastTouch = t;
+}
+
+// ---------------- GAME LOGIC ----------------
+void updateGame() {
+  if (millis() - lastUpdate < 60) return;
+  lastUpdate = millis();
+
+  int joy = analogRead(JOY_X);
+
+  if (joy < 1500) playerX -= 2;
+  else if (joy > 2500) playerX += 2;
+
+  if (playerX < 10) playerX = 10;
+  if (playerX > 118) playerX = 118;
+
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    blockY[i] += speed;
+
+    // Near miss bonus
+    if (abs(blockX[i] - playerX) < 10 &&
+        abs(blockY[i] - playerY) < 15 &&
+        abs(blockX[i] - playerX) > 6) {
+      score += 2;  // bonus
+      beep(30);
+    }
+
+    // Collision
+    if (abs(blockX[i] - playerX) < 6 &&
+        abs(blockY[i] - playerY) < 6) {
+
+      lives--;
+      beep(200);
+
+      blockY[i] = random(-40, 0);
+      blockX[i] = random(0, 120);
+
+      if (lives <= 0) {
+        beep(500);
+        gameState = OVER;
+      }
+    }
+
+    // Reset block
+    if (blockY[i] > 64) {
+      blockY[i] = random(-40, 0);
+      blockX[i] = random(0, 120);
+      score++;
+    }
+  }
+
+  // Difficulty scaling
+  if (score % 20 == 0 && speed < 4) {
+    speed++;
+  }
+}
+
+// ---------------- DRAW GAME ----------------
+void drawGame() {
+
+  drawMochi(playerX, playerY);
+
+  // Ice shapes ❄️
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    drawIce(blockX[i], blockY[i]);
+  }
+
+  // Score
+  u8g2.setCursor(0, 10);
+  u8g2.print("S:");
+  u8g2.print(score);
+
+  // Lives ❤️
+  for (int i = 0; i < lives; i++) {
+    u8g2.drawDisc(100 + i * 8, 8, 3);
+  }
+}
+
+// ---------------- MOCHI PLAYER ----------------
+void drawMochi(int x, int y) {
+  // Face
+  u8g2.drawDisc(x, y, 8);
+
+  // Eyes
+  u8g2.setDrawColor(0);
+  u8g2.drawDisc(x - 3, y - 2, 1);
+  u8g2.drawDisc(x + 3, y - 2, 1);
+
+  // Mouth
+  u8g2.drawHLine(x - 2, y + 3, 4);
+
+  u8g2.setDrawColor(1);
+}
+
+// ---------------- ICE SHAPE ----------------
+void drawIce(int x, int y) {
+  u8g2.drawLine(x, y, x + 4, y + 4);
+  u8g2.drawLine(x + 4, y, x, y + 4);
+  u8g2.drawLine(x + 2, y - 2, x + 2, y + 6);
+  u8g2.drawLine(x - 2, y + 2, x + 6, y + 2);
+}
+
+// ---------------- UI ----------------
+void drawStart() {
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.setCursor(20, 25);
+  u8g2.print("DODGE ICE");
+
+  u8g2.setCursor(10, 45);
+  u8g2.print("Touch to Start");
+}
+
+void drawGameOver() {
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.setCursor(20, 20);
+  u8g2.print("GAME OVER");
+
+  u8g2.setCursor(20, 35);
+  u8g2.print("Score:");
+  u8g2.print(score);
+
+  u8g2.setCursor(10, 55);
+  u8g2.print("Touch = Retry");
+}
+
+// ---------------- BUZZER ----------------
+void beep(int duration) {
+  digitalWrite(BUZZER, HIGH);
+  delay(duration);
+  digitalWrite(BUZZER, LOW);
+}

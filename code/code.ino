@@ -1,0 +1,287 @@
+#include <U8g2lib.h>
+#include <Wire.h>
+
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+
+// Pins
+#define JOY_X 34
+#define JOY_SW 32
+#define BUZZER 25
+
+// Game states
+#define MENU 0
+#define PLAY 1
+#define OVER 2
+
+int gameState = MENU;
+
+// Menu
+int menuIndex = 0;
+
+// Settings
+int difficulty = 1; // 0 easy, 1 medium, 2 hard
+bool soundOn = true;
+
+// Player
+int playerX = 64;
+const int playerY = 58;
+
+// Blocks (UPDATED)
+#define MAX_BLOCKS 4
+int blockX[MAX_BLOCKS];
+int blockY[MAX_BLOCKS];
+int activeBlocks = 2;
+
+// Game variables
+int score = 0;
+int lives = 3;
+
+// Timing
+unsigned long lastUpdate = 0;
+unsigned long lastMoveTime = 0;
+
+int speed = 1;
+
+// Input states
+bool lastButton = HIGH;
+
+// Boss
+bool bossMode = false;
+unsigned long bossStart = 0;
+
+// Animation
+int iceFrame = 0;
+
+void setup() {
+  u8g2.begin();
+  pinMode(JOY_X, INPUT);
+  pinMode(JOY_SW, INPUT_PULLUP);
+  pinMode(BUZZER, OUTPUT);
+
+  randomSeed(analogRead(0));
+}
+
+void loop() {
+  u8g2.clearBuffer();
+
+  if (gameState == MENU) {
+    handleMenuInput();
+    drawMenu();
+  }
+  else if (gameState == PLAY) {
+    updateGame();
+    drawGame();
+  }
+  else if (gameState == OVER) {
+    drawGameOver();
+    if (digitalRead(JOY_SW) == LOW) {
+      delay(200);
+      gameState = MENU;
+    }
+  }
+
+  u8g2.sendBuffer();
+}
+
+// ---------------- MENU INPUT ----------------
+void handleMenuInput() {
+  int joy = analogRead(JOY_X);
+  bool button = digitalRead(JOY_SW);
+
+  if (millis() - lastMoveTime > 200) {
+    if (joy < 1500) {
+      menuIndex--;
+      if (menuIndex < 0) menuIndex = 2;
+      beep(50);
+      lastMoveTime = millis();
+    }
+    else if (joy > 2500) {
+      menuIndex++;
+      if (menuIndex > 2) menuIndex = 0;
+      beep(50);
+      lastMoveTime = millis();
+    }
+  }
+
+  if (button == LOW && lastButton == HIGH) {
+    selectMenu();
+    beep(100);
+  }
+
+  lastButton = button;
+}
+
+// ---------------- MENU ----------------
+void drawMenu() {
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.drawStr(25, 15, "DODGE ICE");
+
+  drawOption(0, "Start Game", 30);
+  drawOption(1, difficultyText(), 45);
+  drawOption(2, soundOn ? "Sound: ON" : "Sound: OFF", 60);
+}
+
+void drawOption(int index, const char* text, int y) {
+  if (menuIndex == index) {
+    u8g2.drawBox(0, y - 10, 128, 12);
+    u8g2.setDrawColor(0);
+    u8g2.drawStr(5, y, text);
+    u8g2.setDrawColor(1);
+  } else {
+    u8g2.drawStr(5, y, text);
+  }
+}
+
+const char* difficultyText() {
+  if (difficulty == 0) return "Easy";
+  if (difficulty == 1) return "Medium";
+  return "Hard";
+}
+
+void selectMenu() {
+  if (menuIndex == 0) {
+    resetGame();
+    gameState = PLAY;
+  }
+  else if (menuIndex == 1) {
+    difficulty = (difficulty + 1) % 3;
+  }
+  else if (menuIndex == 2) {
+    soundOn = !soundOn;
+  }
+}
+
+// ---------------- GAME ----------------
+void resetGame() {
+  playerX = 64;
+  score = 0;
+  lives = 3;
+  bossMode = false;
+
+  // UPDATED difficulty tuning
+  if (difficulty == 0) {
+    speed = 1;
+    activeBlocks = 2;
+  }
+  else if (difficulty == 1) {
+    speed = 2;
+    activeBlocks = 3;
+  }
+  else {
+    speed = 4;   // HARD SPEED BOOST
+    activeBlocks = 4;
+  }
+
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    blockX[i] = random(0, 120);
+    blockY[i] = random(-60, 0);
+  }
+}
+
+void updateGame() {
+  if (millis() - lastUpdate < 60) return;
+  lastUpdate = millis();
+
+  int joy = analogRead(JOY_X);
+
+  if (joy < 1500) playerX -= 3;
+  else if (joy > 2500) playerX += 3;
+
+  if (playerX < 0) playerX = 0;
+  if (playerX > 120) playerX = 120;
+
+  if (score > 0 && score % 20 == 0 && !bossMode) {
+    bossMode = true;
+    bossStart = millis();
+    beep(200);
+  }
+
+  if (bossMode && millis() - bossStart > 5000) {
+    bossMode = false;
+  }
+
+  int currentSpeed = bossMode ? speed + 2 : speed;
+
+  for (int i = 0; i < activeBlocks; i++) {
+    blockY[i] += currentSpeed;
+
+    if (abs(blockX[i] - playerX) < 6 &&
+        abs(blockY[i] - playerY) < 6) {
+
+      lives--;
+      beep(200);
+
+      blockY[i] = random(-40, 0);
+      blockX[i] = random(0, 120);
+
+      if (lives <= 0) {
+        beep(500);
+        gameState = OVER;
+      }
+    }
+
+    if (blockY[i] > 64) {
+      blockY[i] = random(-40, 0);
+      blockX[i] = random(0, 120);
+      score++;
+    }
+  }
+
+  iceFrame = (iceFrame + 1) % 2;
+}
+
+// ---------------- DRAW GAME ----------------
+void drawGame() {
+
+  u8g2.drawDisc(playerX, playerY, 3);
+
+  for (int i = 0; i < activeBlocks; i++) {
+    drawIce(blockX[i], blockY[i]);
+  }
+
+  u8g2.setCursor(0, 10);
+  u8g2.print("S:");
+  u8g2.print(score);
+
+  for (int i = 0; i < lives; i++) {
+    u8g2.drawDisc(100 + i * 8, 8, 3);
+  }
+
+  if (bossMode) {
+    u8g2.setCursor(40, 10);
+    u8g2.print("BOSS!");
+  }
+}
+
+// ---------------- ICE ----------------
+void drawIce(int x, int y) {
+  if (iceFrame == 0) {
+    u8g2.drawLine(x, y, x + 4, y + 4);
+    u8g2.drawLine(x + 4, y, x, y + 4);
+  } else {
+    u8g2.drawLine(x + 2, y - 2, x + 2, y + 6);
+    u8g2.drawLine(x - 2, y + 2, x + 6, y + 2);
+  }
+}
+
+// ---------------- GAME OVER ----------------
+void drawGameOver() {
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.drawStr(20, 25, "GAME OVER");
+
+  char buf[10];
+  sprintf(buf, "Score:%d", score);
+  u8g2.drawStr(20, 45, buf);
+
+  u8g2.drawStr(10, 60, "Press Btn");
+}
+
+// ---------------- BUZZER ----------------
+void beep(int duration) {
+  if (!soundOn) return;
+  digitalWrite(BUZZER, HIGH);
+  delay(duration);
+  digitalWrite(BUZZER, LOW);
+}

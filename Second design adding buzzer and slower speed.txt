@@ -1,0 +1,164 @@
+/Second design for buzzer and slower speed#include <U8g2lib.h>
+#include <Wire.h>
+
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+
+// Pins
+#define JOY_X 34
+#define TOUCH 4
+#define BUZZER 25
+
+// Game states
+#define START 0
+#define PLAY 1
+#define OVER 2
+
+int gameState = START;
+
+// Player
+int playerX = 64;
+const int playerY = 58;
+
+// Blocks (LESS now)
+#define MAX_BLOCKS 2
+int blockX[MAX_BLOCKS];
+int blockY[MAX_BLOCKS];
+
+// Game variables
+int score = 0;
+bool lastTouch = LOW;
+
+// Timing
+unsigned long lastUpdate = 0;
+int speed = 1;  // SLOW start
+
+void setup() {
+  u8g2.begin();
+  pinMode(TOUCH, INPUT);
+  pinMode(JOY_X, INPUT);
+  pinMode(BUZZER, OUTPUT);
+
+  randomSeed(analogRead(0));
+  resetGame();
+}
+
+void loop() {
+  u8g2.clearBuffer();
+
+  handleTouch();
+
+  if (gameState == START) drawStart();
+  else if (gameState == PLAY) {
+    updateGame();
+    drawGame();
+  }
+  else if (gameState == OVER) drawGameOver();
+
+  u8g2.sendBuffer();
+}
+
+void resetGame() {
+  playerX = 64;
+  score = 0;
+  speed = 1;
+
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    blockX[i] = random(0, 120);
+    blockY[i] = random(-60, 0);
+  }
+}
+
+void handleTouch() {
+  bool t = digitalRead(TOUCH);
+
+  if (t == HIGH && lastTouch == LOW) {
+    if (gameState == START) {
+      resetGame();
+      beep(100);  // start sound
+      gameState = PLAY;
+    }
+    else if (gameState == OVER) {
+      gameState = START;
+    }
+  }
+  lastTouch = t;
+}
+
+void updateGame() {
+  if (millis() - lastUpdate < 60) return;  // SLOWER UPDATE
+  lastUpdate = millis();
+
+  int joy = analogRead(JOY_X);
+
+  // smoother movement
+  if (joy < 1500) playerX -= 2;
+  else if (joy > 2500) playerX += 2;
+
+  if (playerX < 0) playerX = 0;
+  if (playerX > 120) playerX = 120;
+
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    blockY[i] += speed;
+
+    if (blockY[i] > 64) {
+      blockY[i] = random(-40, 0);
+      blockX[i] = random(0, 120);
+      score++;
+    }
+
+    // collision
+    if (abs(blockX[i] - playerX) < 6 &&
+        abs(blockY[i] - playerY) < 6) {
+      beep(500);  // game over sound
+      gameState = OVER;
+    }
+  }
+
+  // VERY slow difficulty increase
+  if (score % 15 == 0 && speed < 4) {
+    speed++;
+  }
+}
+
+void drawGame() {
+  u8g2.drawDisc(playerX, playerY, 3);
+
+  for (int i = 0; i < MAX_BLOCKS; i++) {
+    u8g2.drawFrame(blockX[i], blockY[i], 6, 6);
+  }
+
+  u8g2.setCursor(0, 10);
+  u8g2.print("Score:");
+  u8g2.print(score);
+}
+
+void drawStart() {
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.setCursor(20, 25);
+  u8g2.print("DODGE ICE");
+
+  u8g2.setCursor(15, 45);
+  u8g2.print("Touch to Start");
+}
+
+void drawGameOver() {
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.setCursor(20, 20);
+  u8g2.print("GAME OVER");
+
+  u8g2.setCursor(20, 35);
+  u8g2.print("Score:");
+  u8g2.print(score);
+
+  u8g2.setCursor(10, 55);
+  u8g2.print("Touch = Retry");
+}
+
+// 🔊 Simple buzzer function
+void beep(int duration) {
+  digitalWrite(BUZZER, HIGH);
+  delay(duration);
+  digitalWrite(BUZZER, LOW);
+}
